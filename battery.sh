@@ -45,6 +45,7 @@ voltage_hyst_max="2"
 binfolder="/usr/local/co.palokaj.battery"
 battery_binary="$binfolder/battery"
 smc_binary="$binfolder/smc"
+charge_control_binary="$binfolder/charge-control"
 
 # GitHub URLs for setup and updates.
 # Temporarily set to your username and branch to test update functionality with your fork.
@@ -253,8 +254,17 @@ function smc_write_hex() {
 # Discharge control (CHIE) still works.
 smc_supports_chic=false;
 
+# PowerUI.framework charging control (macOS 26.4+ with no SMC charging keys).
+# charge-control binary wraps PowerUISmartChargeClient; runs without root.
+if [[ "$smc_supports_tahoe" == "false" && "$smc_supports_legacy" == "false" && "$smc_supports_chic" == "false" ]] && \
+   [[ -f "$charge_control_binary" ]]; then
+	powerui_available=true
+else
+	powerui_available=false
+fi
+
 function log_smc_capabilities() {
-	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j CHIC=$smc_supports_chic"
+	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j CHIC=$smc_supports_chic powerui=$powerui_available"
 }
 
 ## #################
@@ -320,6 +330,8 @@ function disable_discharging() {
 			smc_write_hex CH0C 00
 		elif [[ "$smc_supports_chic" == "true" ]]; then
 			smc_write_hex CHIC 00
+		elif [[ "$powerui_available" == "true" ]]; then
+			"$charge_control_binary" on
 		else
 			log "⚠️ Unable to reset charging state"
 		fi
@@ -342,6 +354,8 @@ function disable_discharging() {
 			smc_write_hex CH0C 00
 		elif [[ "$smc_supports_chic" == "true" ]]; then
 			smc_write_hex CHIC 00
+		elif [[ "$powerui_available" == "true" ]]; then
+			"$charge_control_binary" on
 		else
 			log "⚠️ Unable to reset charging state"
 		fi
@@ -363,10 +377,9 @@ function enable_charging() {
 		smc_write_hex CH0B 00
 		smc_write_hex CH0C 00
 	elif [[ "$smc_supports_chic" == "true" ]]; then
-		# Experimental: CHIC=[ui8] is the candidate charging inhibit key for M3+/macOS 26.4+.
-		# macOS 26.4+ also manages charging via its own native limit (System Settings > Battery).
-		# If macOS native limit is active it may override this SMC write.
 		smc_write_hex CHIC 00
+	elif [[ "$powerui_available" == "true" ]]; then
+		"$charge_control_binary" on
 	else
 		log "⚠️ Unable to determine SMC keys for enabling charging"
 		log "ℹ️  On macOS 26.4+, use System Settings > Battery > Charging Limit instead"
@@ -382,8 +395,9 @@ function disable_charging() {
 		smc_write_hex CH0B 02
 		smc_write_hex CH0C 02
 	elif [[ "$smc_supports_chic" == "true" ]]; then
-		# Experimental: CHIC=01 to inhibit charging on M3+/macOS 26.4+.
 		smc_write_hex CHIC 01
+	elif [[ "$powerui_available" == "true" ]]; then
+		"$charge_control_binary" off
 	else
 		log "⚠️ Unable to determine SMC keys for disabling charging"
 		log "ℹ️  On macOS 26.4+, use System Settings > Battery > Charging Limit instead"

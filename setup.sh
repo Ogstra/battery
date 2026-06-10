@@ -84,6 +84,9 @@ sudo install -d -m 755 -o root -g wheel "$binfolder"
 echo "[  5 ] Install prebuilt smc binary into $binfolder"
 sudo install -m 755 -o root -g wheel "$batteryfolder/dist/smc" "$binfolder/smc"
 
+echo "[ 5b ] Install charge-control binary into $binfolder (macOS 26.4+ PowerUI helper)"
+sudo install -m 755 -o root -g wheel "$batteryfolder/dist/charge-control" "$binfolder/charge-control"
+
 echo "[  6 ] Install battery script into $binfolder"
 sudo install -m 755 -o root -g wheel "$batteryfolder/battery.sh" "$binfolder/battery"
 
