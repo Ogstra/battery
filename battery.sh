@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.4"
+BATTERY_CLI_VERSION="v1.3.5"
 
 # If a script may run as root:
 #   - Reset PATH to safe defaults at the very beginning of the script.
