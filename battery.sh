@@ -246,10 +246,12 @@ function smc_write_hex() {
 [[ $($smc_binary -k CHIE -r) =~ "no data" ]] && smc_supports_adapter_chie=false || smc_supports_adapter_chie=true;
 [[ $($smc_binary -k CH0I -r) =~ "no data" ]] && smc_supports_adapter_ch0i=false || smc_supports_adapter_ch0i=true;
 [[ $($smc_binary -k CH0J -r) =~ "no data" || $($smc_binary -k CH0J -r) =~ "Error" ]] && smc_supports_adapter_ch0j=false || smc_supports_adapter_ch0j=true;
-# CHIC (CHarging Inhibit Control) — candidate key for M3+ / macOS 26.4+ hardware
-# CH0B/CHTE are absent on macOS 26.4+ (Mac15+). CHIC=[ui8] 0=enabled follows same pattern.
-# WARNING: unconfirmed — requires discharge-then-recharge test to validate.
-[[ $($smc_binary -k CHIC -r) =~ "no data" ]] && smc_supports_chic=false || smc_supports_chic=true;
+# macOS 26.4+ (Tahoe) on M3+ hardware (Mac15+) removed CHTE/CH0B/CH0C.
+# Charging control moved to private PowerUI.framework (PowerUISmartChargeClient).
+# SMC writes to all known charging keys (CHIC, CHIB, CHIO, CHIL, CH0R) do not persist —
+# firmware resets them immediately. Charging control via SMC is not possible on this hardware.
+# Discharge control (CHIE) still works.
+smc_supports_chic=false;
 
 function log_smc_capabilities() {
 	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j CHIC=$smc_supports_chic"
