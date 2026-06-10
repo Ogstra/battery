@@ -145,8 +145,8 @@ ALL ALL = NOPASSWD: $battery_binary update_silent
 ALL ALL = NOPASSWD: $battery_binary update_silent is_enabled
 
 # Allow passwordless battery-charging–related SMC write commands
-Cmnd_Alias    CHARGING_OFF = $smc_binary -k CH0B -w 02, $smc_binary -k CH0C -w 02, $smc_binary -k CHTE -w 01000000
-Cmnd_Alias    CHARGING_ON = $smc_binary -k CH0B -w 00, $smc_binary -k CH0C -w 00, $smc_binary -k CHTE -w 00000000
+Cmnd_Alias    CHARGING_OFF = $smc_binary -k CH0B -w 02, $smc_binary -k CH0C -w 02, $smc_binary -k CHTE -w 01000000, $smc_binary -k CHIC -w 01
+Cmnd_Alias    CHARGING_ON = $smc_binary -k CH0B -w 00, $smc_binary -k CH0C -w 00, $smc_binary -k CHTE -w 00000000, $smc_binary -k CHIC -w 00
 Cmnd_Alias    FORCE_DISCHARGE_OFF = $smc_binary -k CH0I -w 00, $smc_binary -k CHIE -w 00, $smc_binary -k CH0J -w 00
 Cmnd_Alias    FORCE_DISCHARGE_ON = $smc_binary -k CH0I -w 01, $smc_binary -k CHIE -w 08, $smc_binary -k CH0J -w 01
 Cmnd_Alias    LED_CONTROL = $smc_binary -k ACLC -w 04, $smc_binary -k ACLC -w 03, $smc_binary -k ACLC -w 02, $smc_binary -k ACLC -w 01, $smc_binary -k ACLC -w 00
@@ -246,9 +246,13 @@ function smc_write_hex() {
 [[ $($smc_binary -k CHIE -r) =~ "no data" ]] && smc_supports_adapter_chie=false || smc_supports_adapter_chie=true;
 [[ $($smc_binary -k CH0I -r) =~ "no data" ]] && smc_supports_adapter_ch0i=false || smc_supports_adapter_ch0i=true;
 [[ $($smc_binary -k CH0J -r) =~ "no data" || $($smc_binary -k CH0J -r) =~ "Error" ]] && smc_supports_adapter_ch0j=false || smc_supports_adapter_ch0j=true;
+# CHIC (CHarging Inhibit Control) — candidate key for M3+ / macOS 26.4+ hardware
+# CH0B/CHTE are absent on macOS 26.4+ (Mac15+). CHIC=[ui8] 0=enabled follows same pattern.
+# WARNING: unconfirmed — requires discharge-then-recharge test to validate.
+[[ $($smc_binary -k CHIC -r) =~ "no data" ]] && smc_supports_chic=false || smc_supports_chic=true;
 
 function log_smc_capabilities() {
-	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j"
+	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j CHIC=$smc_supports_chic"
 }
 
 ## #################
@@ -312,6 +316,8 @@ function disable_discharging() {
 		elif [[ "$smc_supports_legacy" == "true" ]]; then
 			smc_write_hex CH0B 00
 			smc_write_hex CH0C 00
+		elif [[ "$smc_supports_chic" == "true" ]]; then
+			smc_write_hex CHIC 00
 		else
 			log "⚠️ Unable to reset charging state"
 		fi
@@ -332,6 +338,8 @@ function disable_discharging() {
 		elif [[ "$smc_supports_legacy" == "true" ]]; then
 			smc_write_hex CH0B 00
 			smc_write_hex CH0C 00
+		elif [[ "$smc_supports_chic" == "true" ]]; then
+			smc_write_hex CHIC 00
 		else
 			log "⚠️ Unable to reset charging state"
 		fi
@@ -352,8 +360,14 @@ function enable_charging() {
 	elif [[ "$smc_supports_legacy" == "true" ]]; then
 		smc_write_hex CH0B 00
 		smc_write_hex CH0C 00
+	elif [[ "$smc_supports_chic" == "true" ]]; then
+		# Experimental: CHIC=[ui8] is the candidate charging inhibit key for M3+/macOS 26.4+.
+		# macOS 26.4+ also manages charging via its own native limit (System Settings > Battery).
+		# If macOS native limit is active it may override this SMC write.
+		smc_write_hex CHIC 00
 	else
 		log "⚠️ Unable to determine SMC keys for enabling charging"
+		log "ℹ️  On macOS 26.4+, use System Settings > Battery > Charging Limit instead"
 	fi
 	disable_discharging
 }
@@ -365,8 +379,12 @@ function disable_charging() {
 	elif [[ "$smc_supports_legacy" == "true" ]]; then
 		smc_write_hex CH0B 02
 		smc_write_hex CH0C 02
+	elif [[ "$smc_supports_chic" == "true" ]]; then
+		# Experimental: CHIC=01 to inhibit charging on M3+/macOS 26.4+.
+		smc_write_hex CHIC 01
 	else
 		log "⚠️ Unable to determine SMC keys for disabling charging"
+		log "ℹ️  On macOS 26.4+, use System Settings > Battery > Charging Limit instead"
 	fi
 }
 
@@ -374,10 +392,22 @@ function get_smc_charging_status() {
 	local status_key="CH0B"
 	if [[ "$smc_supports_tahoe" == "true" ]]; then
 		status_key="CHTE"
+	elif [[ "$smc_supports_chic" == "true" ]]; then
+		status_key="CHIC"
 	fi
 	hex_status=$(smc_read_hex "$status_key")
 	if [[ -z "$hex_status" ]]; then
-		echo "unknown"
+		# Fallback: derive charging status from pmset when no known SMC key has data.
+		# This covers macOS 26.4+ where CHTE/CH0B are absent on newer hardware.
+		local pmset_state
+		pmset_state=$(pmset -g batt | grep -Eo "(charging|not charging|discharging|finishing charge)" | head -1)
+		if [[ "$pmset_state" == "charging" || "$pmset_state" == "finishing charge" ]]; then
+			echo "enabled"
+		elif [[ "$pmset_state" == "not charging" || "$pmset_state" == "discharging" ]]; then
+			echo "disabled"
+		else
+			echo "unknown"
+		fi
 		return
 	fi
 	if [[ "$smc_supports_tahoe" == "true" ]]; then
