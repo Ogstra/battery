@@ -416,8 +416,8 @@ function get_smc_charging_status() {
 		# Fallback: derive charging status from pmset when no known SMC key has data.
 		# This covers macOS 26.4+ where CHTE/CH0B are absent on newer hardware.
 		local pmset_state
-		pmset_state=$(pmset -g batt | grep -Eo "(charging|not charging|discharging|finishing charge)" | head -1)
-		if [[ "$pmset_state" == "charging" || "$pmset_state" == "finishing charge" ]]; then
+		pmset_state=$(pmset -g batt | grep -Eo "(charged|charging|not charging|discharging|finishing charge)" | head -1)
+		if [[ "$pmset_state" == "charging" || "$pmset_state" == "finishing charge" || "$pmset_state" == "charged" ]]; then
 			echo "enabled"
 		elif [[ "$pmset_state" == "not charging" || "$pmset_state" == "discharging" ]]; then
 			echo "disabled"
